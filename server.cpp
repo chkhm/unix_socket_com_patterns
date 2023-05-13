@@ -5,89 +5,123 @@
 
 #include <sys/socket.h>
 #include <sys/un.h>
+
+// required for POLLRDHUP macro
+#define _GNU_SOURCE 
+#include <poll.h>
+
 #define BUF_SIZE 100
-#define SV_SOCK_PATH "/tmp/us_xfr"
-
-
+#define SV_SOCK_PATH "/tmp/mysock"
+// 100 ms timeout for poll
+#define TIMEOUT 100
 #define BACKLOG 5
 
 int main(int argc, char *argv[]) {
-  struct sockaddr_un addr;
+    struct sockaddr_un addr;
 
-  // Create a new server socket with domain: AF_UNIX, type: SOCK_STREAM, protocol: 0
-  int sfd = socket(AF_UNIX, SOCK_STREAM, 0);
-  printf("Server socket fd = %d\n", sfd);
+    int sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    printf("Server socket fd = %d\n", sfd);
 
-  // Make sure socket's file descriptor is legit.
-  if (sfd == -1) {
-    printf("create socket failed");
-    return -1;
-  }
-
-  // Make sure the address we're planning to use isn't too long.
-  if (strlen(SV_SOCK_PATH) > sizeof(addr.sun_path) - 1) {
-    printf("path to socket too long");
-    return -1;
-  }
-
-  // Delete any file that already exists at the address. Make sure the deletion
-  // succeeds. If the error is just that the file/directory doesn't exist, it's fine.
-  if (remove(SV_SOCK_PATH) == -1 && errno != ENOENT) {
-    printf("Couldn't remove socket file");
-    return -1;
-  }
-
-  // Zero out the address, and set family and path.
-  memset(&addr, 0, sizeof(struct sockaddr_un));
-  addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, SV_SOCK_PATH, sizeof(addr.sun_path) - 1);
-
-  // Bind the socket to the address. Note that we're binding the server socket
-  // to a well-known address so that clients know where to connect.
-  if (bind(sfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un)) == -1) {
-    printf("failed to bind to socket.");
-    return -1;
-  }
-
-  // The listen call marks the socket as *passive*. The socket will subsequently
-  // be used to accept connections from *active* sockets.
-  // listen cannot be called on a connected socket (a socket on which a connect()
-  // has been succesfully performed or a socket returned by a call to accept()).
-  if (listen(sfd, BACKLOG) == -1) {
-    printf("failed to listen to socket.")
-    return -1;
-  }
-
-  ssize_t numRead;
-  char buf[BUF_SIZE];
-  for (;;) {          /* Handle client connections iteratively */
-
-    // Accept a connection. The connection is returned on a NEW
-    // socket, 'cfd'; the listening socket ('sfd') remains open
-    // and can be used to accept further connections. */
-    printf("Waiting to accept a connection...\n");
-    // NOTE: blocks until a connection request arrives.
-    int cfd = accept(sfd, NULL, NULL);
-    printf("Accepted socket fd = %d\n", cfd);
-
-    //
-    // Transfer data from connected socket to stdout until EOF */
-    //
-
-    // Read at most BUF_SIZE bytes from the socket into buf.
-    while ((numRead = read(cfd, buf, BUF_SIZE)) > 0) {
-      // Then, write those bytes from buf into STDOUT.
-      if (write(STDOUT_FILENO, buf, numRead) != numRead) {
-        fatal("partial/failed write");
-      }
+    if (sfd == -1) {
+        printf("create socket failed");
+        return -1;
     }
 
-    if (numRead == -1) {
-      errExit("read");
+    if (strlen(SV_SOCK_PATH) > sizeof(addr.sun_path) - 1) {
+        printf("path to socket too long");
+        return -1;
     }
 
-    if (close(cfd) == -1) {
-      errMsg("close");
+    // ENOENT means "does not exist"
+    if (remove(SV_SOCK_PATH) == -1 && errno != ENOENT) {
+        printf("Couldn't remove socket file");
+        return -1;
     }
-  }
+
+    memset(&addr, 0, sizeof(struct sockaddr_un));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SV_SOCK_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(sfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un)) == -1) {
+        printf("failed to bind to socket.");
+        return -1;
+    }
+
+    if (listen(sfd, BACKLOG) == -1) {
+        printf("failed to listen to socket.");
+        return -1;
+    }
+
+    ssize_t numRead;
+    char buf[BUF_SIZE];
+
+    // passive server socket plus up to 99 client sockets
+    struct pollfd sockets[100];
+    int num_sockets = 1;
+
+    sockets[0].fd = sfd;
+    sockets[0].events = POLLIN;
+    sockets[0].revents = 0;
+
+    // init fd with -1 means ignore for the poll command
+    for (int i = 1; i<100; i++) {
+        sockets[i].fd = -1;
+        sockets[i].events = 0;
+        sockets[i].revents = 0;
+    }
+
+    for (;;) {
+
+        int poll_rslt = poll(sockets, num_sockets, TIMEOUT);
+        if (poll_rslt < 0) {
+            printf("Error during poll: %d: %s", errno, strerror(errno));
+            return -1;
+        }
+        if (poll_rslt == 0) {
+            continue;
+        }
+
+        if (sockets[0].revents !=0 && sockets[0].revents != POLLIN) {
+            printf("Error on server socket: %d: %s", errno, strerror(errno));
+            return -1;
+        }
+        if (sockets[0].revents == POLLIN) {
+            printf("Waiting to accept a connection...\n");
+            // NOTE: blocks until a connection request arrives. But we got a poll event, so should return right away.
+            int cfd = accept(sfd, NULL, NULL);
+            printf("Accepted socket fd = %d\n", cfd);
+            sockets[num_sockets].fd = cfd;
+            sockets[num_sockets].events = POLLIN;
+            sockets[num_sockets].revents = 0;
+            num_sockets++;
+        }
+
+        for (int i=1; i < 100; i++) {
+            if (sockets[i].revents != 0 && sockets[i].revents != POLLIN ) {
+                printf("Error on client socket[%d]: %d: %s", i, errno, strerror(errno));
+                close(sockets[i].fd);
+                sockets[i].fd = -1;
+                sockets[i].events = 0;
+                sockets[i].revents = 0;
+            }
+            else if (sockets[i].revents == POLLIN) {
+                int read_bytes = 0;
+                while(read_bytes = read(sockets[i].fd, buf, BUF_SIZE) > 0) {
+                    int write_bytes = write(sockets[i].fd, buf, read_bytes);
+                    if (write_bytes != read_bytes) {
+                        printf("write to socket[%d] only partial/ incomplete.", i);
+                    }
+                }
+                if (read_bytes < 0) {
+                    printf("error reading from socket[%d].", i);
+                    close(sockets[i].fd);
+                    sockets[i].fd = -1;
+                    sockets[i].events = 0;
+                    sockets[i].revents = 0;
+                }
+            }
+        }
+    } // end forever loop
+
+    return 0;
 }
