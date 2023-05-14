@@ -23,23 +23,23 @@
 
 
 enum domain_mode_t {
-    unix_domain_mode,
-    tcp_domain_mode
-};
-
-struct socket_data_t {
-        int socket_family = AF_UNIX;
-        int socket_type = SOCK_STREAM;
-        int protocol = 0;
-};
-
-socket_data_t data_types[] = {
-    { AF_UNIX, SOCK_STREAM, 0},
-    { AF_INET, SOCK_STREAM, 0}
+    unix_domain_mode = 0,
+    tcp_domain_mode = 1
 };
 
 int make_socket(domain_mode_t mode) {
-    int s = socket(data_types[mode].socket_family, data_types[mode].protocol, data_types[mode].protocol);
+    printf("make socket ");
+    printf("mode: %d\n", mode);
+    int s = -1;
+    switch (mode) {
+        case unix_domain_mode:
+            s = socket(AF_UNIX, SOCK_STREAM, 0);
+            break;
+        case tcp_domain_mode:
+            s = socket(AF_INET, SOCK_STREAM, 0);
+            break;
+    }
+    printf("socket is %d\n", s);
     return s;
 }
 
@@ -71,7 +71,10 @@ int make_bind_tcp_domain(int sfd) {
     int opt = 1;
     
     // avoid "address already in use error"
-    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+
+    // Forcefully attaching socket to the port 8080 
+    // if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR , &opt, sizeof(opt))) {
         perror("setsockopt");
         // exit(EXIT_FAILURE);
         return -1;
@@ -101,9 +104,9 @@ int make_bind(domain_mode_t mode, int sfd) {
 int main(int argc, char *argv[]) {
     domain_mode_t mode = unix_domain_mode;
     if (argc > 1) {
-        if (argv[1][1] == 'u' || argv[1][1] == 'U') {
+        if (argv[1][0] == 'u' || argv[1][0] == 'U') {
             mode = unix_domain_mode;
-        } else if (argv[1][1] == 't' || argv[1][1] == 'T') {
+        } else if (argv[1][0] == 't' || argv[1][0] == 'T') {
             mode = tcp_domain_mode;
         } else {
             printf("Wrong parameter %s", argv[1]);
