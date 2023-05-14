@@ -21,21 +21,13 @@ When the server sends the message back the client prints it to sdtdout.
 
 The client repeats this 10 times with a time interval of 5 seconds and then closes.
 
-## Strange effect
-
-On a Mac this does not work as expected. When I start a server and then afterwards two clients, the second client
-is blocked on the write call until the first client has disconnected.
-
-Apparently, the unix socket is serializing the access.
-
-I haven't tried yet on a Linux machine.
 
 ## How to run the experiment
 
 ```text
 terminal 1:                terminal 2:                 terminal 3:
 
-$> server                  $> client aaa               $> client bbb
+$> server [t|u]                 $> client [t|u] aaa               $> client [t|u] bbb
 
 ```
 
