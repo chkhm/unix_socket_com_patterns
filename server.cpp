@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (sockets[0].revents !=0 && sockets[0].revents != POLLIN) {
-            printf("Error on server socket: %d: %s", errno, strerror(errno));
+            printf("Error on server socket: %d: %s\n", errno, strerror(errno));
             return -1;
         }
         if (sockets[0].revents == POLLIN) {
@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
 
         for (int i=1; i < 100; i++) {
             if (sockets[i].revents != 0 && sockets[i].revents != POLLIN ) {
-                printf("Error on client socket[%d]: %d: %s", i, errno, strerror(errno));
+                printf("Error on client socket[%d]: %d: %s\n", i, errno, strerror(errno));
                 close(sockets[i].fd);
                 sockets[i].fd = -1;
                 sockets[i].events = 0;
@@ -106,7 +106,9 @@ int main(int argc, char *argv[]) {
             }
             else if (sockets[i].revents == POLLIN) {
                 int read_bytes = 0;
-                while(read_bytes = read(sockets[i].fd, buf, BUF_SIZE) > 0) {
+                while((read_bytes = read(sockets[i].fd, buf, BUF_SIZE)) > 0) {
+                    buf[read_bytes] = '\0';
+                    printf("read from socket %d : %s\n", i, buf);
                     int write_bytes = write(sockets[i].fd, buf, read_bytes);
                     if (write_bytes != read_bytes) {
                         printf("write to socket[%d] only partial/ incomplete.", i);
