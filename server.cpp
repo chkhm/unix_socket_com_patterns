@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
     int num_sockets = 1;
 
     sockets[0].fd = sfd;
-    sockets[0].events = POLLIN;
+    sockets[0].events = POLLIN | POLLPRI;
     sockets[0].revents = 0;
 
     // init fd with -1 means ignore for the poll command
@@ -151,12 +151,12 @@ int main(int argc, char *argv[]) {
     }
 
     for (;;) {
-
         int poll_rslt = poll(sockets, num_sockets, TIMEOUT);
         if (poll_rslt < 0) {
             printf("Error during poll: %d: %s", errno, strerror(errno));
             return -1;
         }
+
         if (poll_rslt == 0) {
             continue;
         }
@@ -165,7 +165,8 @@ int main(int argc, char *argv[]) {
             printf("Error on server socket: %d: %s\n", errno, strerror(errno));
             return -1;
         }
-        if (sockets[0].revents == POLLIN) {
+
+        if (sockets[0].revents & POLLIN) {
             printf("Waiting to accept a connection...\n");
             // NOTE: blocks until a connection request arrives. But we got a poll event, so should return right away.
             int cfd = accept(sfd, NULL, NULL);
@@ -174,25 +175,35 @@ int main(int argc, char *argv[]) {
             sockets[num_sockets].events = POLLIN;
             sockets[num_sockets].revents = 0;
             num_sockets++;
+            sockets[0].fd = sfd;
+            sockets[0].events = POLLIN;
+            sockets[0].revents = 0;
+            printf("Num sockets: %d\n", num_sockets);
         }
 
-        for (int i=1; i < 100; i++) {
-            if (sockets[i].revents != 0 && sockets[i].revents != POLLIN ) {
+        for (int i=1; i < num_sockets; i++) {
+            if (sockets[i].revents & POLLHUP) {
+                printf("Client %d closed connection\n", i);
+                close(sockets[i].fd);
+                sockets[i].fd = -1;
+                sockets[i].events = 0;
+                sockets[i].revents = 0;                
+            } 
+            else if (sockets[i].revents != 0 && sockets[i].revents != POLLIN ) {
                 printf("Error on client socket[%d]: %d: %s\n", i, errno, strerror(errno));
                 close(sockets[i].fd);
                 sockets[i].fd = -1;
                 sockets[i].events = 0;
                 sockets[i].revents = 0;
             }
-            else if (sockets[i].revents == POLLIN) {
+            else if (sockets[i].revents & POLLIN) {
                 int read_bytes = 0;
-                while((read_bytes = read(sockets[i].fd, buf, BUF_SIZE)) > 0) {
-                    buf[read_bytes] = '\0';
-                    printf("read from socket %d : %s\n", i, buf);
-                    int write_bytes = write(sockets[i].fd, buf, read_bytes);
-                    if (write_bytes != read_bytes) {
-                        printf("write to socket[%d] only partial/ incomplete.", i);
-                    }
+                read_bytes = read(sockets[i].fd, buf, BUF_SIZE);
+                buf[read_bytes] = '\0';
+                printf("read from socket %d : %s\n", i, buf);
+                int write_bytes = write(sockets[i].fd, buf, read_bytes);
+                if (write_bytes != read_bytes) {
+                    printf("write to socket[%d] only partial/ incomplete.", i);
                 }
                 if (read_bytes < 0) {
                     printf("error reading from socket[%d].", i);
