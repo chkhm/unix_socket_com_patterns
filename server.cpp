@@ -2,48 +2,125 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netinet/in.h>
 
 // required for POLLRDHUP macro
 #define _GNU_SOURCE 
 #include <poll.h>
 
 #define BUF_SIZE 100
+
 #define SV_SOCK_PATH "/tmp/mysock"
 // 100 ms timeout for poll
 #define TIMEOUT 100
 #define BACKLOG 5
 
-int main(int argc, char *argv[]) {
+#define PORT 8080
+
+
+enum domain_mode_t {
+    unix_domain_mode,
+    tcp_domain_mode
+};
+
+struct socket_data_t {
+        int socket_family = AF_UNIX;
+        int socket_type = SOCK_STREAM;
+        int protocol = 0;
+};
+
+socket_data_t data_types[] = {
+    { AF_UNIX, SOCK_STREAM, 0},
+    { AF_INET, SOCK_STREAM, 0}
+};
+
+int make_socket(domain_mode_t mode) {
+    int s = socket(data_types[mode].socket_family, data_types[mode].protocol, data_types[mode].protocol);
+    return s;
+}
+
+int make_bind_unix_domain(int sfd) {
     struct sockaddr_un addr;
-
-    int sfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    printf("Server socket fd = %d\n", sfd);
-
-    if (sfd == -1) {
-        printf("create socket failed");
-        return -1;
-    }
-
     if (strlen(SV_SOCK_PATH) > sizeof(addr.sun_path) - 1) {
         printf("path to socket too long");
         return -1;
     }
-
     // ENOENT means "does not exist"
     if (remove(SV_SOCK_PATH) == -1 && errno != ENOENT) {
         printf("Couldn't remove socket file");
         return -1;
     }
-
     memset(&addr, 0, sizeof(struct sockaddr_un));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, SV_SOCK_PATH, sizeof(addr.sun_path) - 1);
 
-    if (bind(sfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un)) == -1) {
+    int rslt = bind(sfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un));
+    if (rslt == -1) {
         printf("failed to bind to socket.");
+        return -1;
+    }
+    return rslt;
+}
+
+int make_bind_tcp_domain(int sfd) {
+    struct sockaddr_in addr;
+    int opt = 1;
+    
+    // avoid "address already in use error"
+    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        // exit(EXIT_FAILURE);
+        return -1;
+    }
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(PORT);
+  
+    int rslt = bind(sfd, (struct sockaddr*)&addr, sizeof(addr));
+    if (rslt < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+    return rslt;
+}
+
+int make_bind(domain_mode_t mode, int sfd) {
+    switch (mode) {
+        case unix_domain_mode:
+        return make_bind_unix_domain(sfd);
+        case tcp_domain_mode:
+        return make_bind_tcp_domain(sfd);
+    }
+    return -1;
+}
+
+int main(int argc, char *argv[]) {
+    domain_mode_t mode = unix_domain_mode;
+    if (argc > 1) {
+        if (argv[1][1] == 'u' || argv[1][1] == 'U') {
+            mode = unix_domain_mode;
+        } else if (argv[1][1] == 't' || argv[1][1] == 'T') {
+            mode = tcp_domain_mode;
+        } else {
+            printf("Wrong parameter %s", argv[1]);
+            return -1;
+        }
+    }
+
+    int sfd = make_socket(mode);
+    printf("Server socket fd = %d\n", sfd);
+    if (sfd == -1) {
+        printf("create socket failed");
+        return -1;
+    }
+
+    int rslt = make_bind(mode, sfd);
+    if (rslt < 0) {
+        printf("binding failed.");
         return -1;
     }
 
